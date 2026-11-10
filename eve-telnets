@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+# eve-telnets : ouvrir dans le terminal la console d'un nœud EVE-NG démarré.
+# https://github.com/Arnaudmyges/eve-telnets · licence MIT
+#
+# La liste des nœuds est relue à chaque lancement, en SSH sur la VM EVE-NG :
+# chaque nœud démarré y tourne dans un processus …_wrapper lancé avec
+# -T <pod> -D <n° du nœud> -t <nom>, et sa console écoute sur 32768 + 128 × pod + n°.
+# Rien à configurer par lab : un nœud démarré apparaît, un nœud arrêté disparaît.
+#
+# Console : socat (terminal brut, Ctrl+D ferme la connexion) + ncat --telnet
+# (répond à la négociation telnet). Pas le client telnet : son échappement Ctrl+]
+# est inaccessible sur un clavier AZERTY, et `exit` sur l'équipement ne ferme que
+# la session IOS, pas la connexion.
+set -euo pipefail
+
+VERSION=0.1.0
+PROG=${0##*/}
+
+aide() {
+  cat << EOF
+$PROG $VERSION : console des nœuds EVE-NG démarrés, dans le terminal.
+
+Usage :
+  $PROG [-H HÔTE] [-s RECHERCHE]   choisir un nœud dans la liste, Entrée pour sa console
+  $PROG -l | --list                lister les nœuds démarrés (nom, port)
+  $PROG --console IP PORT [NOM]    ouvrir une console sans passer par la liste
+  $PROG telnet://IP:PORT           idem, pour les liens « console native » d'EVE-NG
+
+Dans une console : Ctrl+D pour quitter (retour à la liste).
+
+Options :
+  -H, --host HÔTE     VM EVE-NG en SSH : alias de ~/.ssh/config ou root@IP
+                      (défaut : \$EVE_TELNETS_HOST, sinon ~/.config/eve-telnets/host,
+                      sinon « eve-ng »). Connexion par clé obligatoire.
+  -s, --search TEXTE  liste déjà filtrée
+  -h, --help          cette aide
+  -V, --version       version
+
+Sélecteur : sshs s'il est installé, sinon fzf (forcer : EVE_TELNETS_PICKER=fzf).
+EOF
+}
+
+erreur() { echo "$PROG : $*" >&2; exit 1; }
+
+verifier_outils() {
+  local outil
+  for outil in "$@"; do
+    command -v "$outil" > /dev/null || erreur "$outil absent (voir le README, section Installation)"
+  done
+}
+
+# console IP PORT [NOM] : ouvre la console et rend la main quand on la quitte
+console() {
+  verifier_outils socat ncat
+  printf '\e[2m── %s · Ctrl+D pour quitter ──\e[0m\n' "${3:-$1:$2}"
+  socat -,rawer,escape=0x04 "EXEC:ncat --telnet $1 $2"
+}
+
+hote_eve() {
+  local f=${XDG_CONFIG_HOME:-$HOME/.config}/eve-telnets/host
+  if [ -n "${HOTE:-}" ]; then echo "$HOTE"
+  elif [ -n "${EVE_TELNETS_HOST:-}" ]; then echo "$EVE_TELNETS_HOST"
+  elif [ -s "$f" ]; then head -1 "$f"
+  else echo eve-ng
+  fi
+}
+
+# Adresse de la VM telle que ssh la résout (alias ou user@IP)
+ip_eve() { ssh -G "$1" 2> /dev/null | awk '$1 == "hostname" { print $2; exit }'; }
+
+# lister HÔTE : « nom<TAB>port » par nœud démarré, trié par nom, sans doublon
+# (un nœud IOL tourne dans 2 processus) ; le pod est ajouté au nom s'il n'est pas 0
+lister() {
+  local procs err
+  err=$(mktemp)
+  # Erreurs SSH gardées de côté : affichées seulement en cas d'échec (sinon
+  # l'avertissement « post-quantum » du vieil OpenSSH d'EVE-NG à chaque lancement)
+  if ! procs=$(ssh -o BatchMode=yes -o ConnectTimeout=5 "$1" 'ps -eo args=' 2> "$err" < /dev/null); then
+    cat "$err" >&2
+    rm -f "$err"
+    erreur "$1 injoignable en SSH par clé (ssh-copy-id $1 ?)"
+  fi
+  rm -f "$err"
+  awk '
+    $1 ~ /\/[a-z0-9]+_wrapper$/ {
+      T = ""; D = ""; t = ""
+      for (i = 2; i <= NF && $i != "--"; i++) {
+        if ($i == "-T") T = $(i + 1)
+        else if ($i == "-D") D = $(i + 1)
+        else if ($i == "-t") { t = $(++i); while (i < NF && $(i + 1) !~ /^-/) t = t "-" $(++i) }
+      }
+      if (T !~ /^[0-9]+$/ || D !~ /^[0-9]+$/) next
+      gsub(/"/, "", t)
+      if (t == "") t = "noeud-" D
+      if (T != 0) t = t "-pod" T
+      print t "\t" 32768 + 128 * T + D
+    }' <<< "$procs" | sort -fu
+}
+
+# Lien telnet://IP:PORT (console native d'EVE-NG) : nom du nœud retrouvé si possible
+ouvrir_url() {
+  local reste=${1#telnet://} ip port nom=""
+  reste=${reste%%/*}
+  ip=${reste%:*} port=${reste##*:}
+  [ "$ip" != "$reste" ] || port=23
+  [[ $port =~ ^[0-9]+$ ]] || erreur "lien invalide : $1"
+  if [ "$(ip_eve "$(hote_eve)")" = "$ip" ]; then
+    nom=$(lister "$(hote_eve)" 2> /dev/null | awk -F'\t' -v p="$port" '$2 == p { print $1; exit }') || true
+  fi
+  console "$ip" "$port" "$nom"
+}
+
+choisir_sshs() {
+  local ip=$1 noeuds=$2 moi
+  # Globale : le trap s'exécute après la fin de la fonction
+  LISTE=$(mktemp -p "${XDG_RUNTIME_DIR:-/tmp}" eve-telnets.XXXXXX)
+  trap 'rm -f "$LISTE"' EXIT
+  awk -F'\t' -v ip="$ip" '{ printf "Host %s\n  HostName %s\n  Port %s\n\n", $1, ip, $2 }' \
+    <<< "$noeuds" > "$LISTE"
+  moi=$(readlink -f "$0")
+  sshs -c "$LISTE" --color green --no-sort ${RECHERCHE:+-s "$RECHERCHE"} \
+    -t "\"$moi\" --console \"{{{destination}}}\" \"{{{port}}}\" \"{{{name}}}\""
+}
+
+choisir_fzf() {
+  local ip=$1 noeuds=$2 ligne
+  while ligne=$(fzf --height=~50% --reverse --prompt='console> ' --delimiter='\t' \
+    --with-nth=1 --header='Entrée : console · Ctrl+D dans la console : retour ici · Échap : quitter' \
+    ${RECHERCHE:+--query "$RECHERCHE"} <<< "$noeuds"); do
+    console "$ip" "${ligne##*$'\t'}" "${ligne%%$'\t'*}" || true
+  done
+}
+
+HOTE="" RECHERCHE="" MODE=choisir
+while [ $# -gt 0 ]; do
+  case $1 in
+    -h | --help) aide; exit ;;
+    -V | --version) echo "$PROG $VERSION"; exit ;;
+    -H | --host) HOTE=${2:?"$PROG : -H HÔTE"}; shift 2 ;;
+    -s | --search) RECHERCHE=${2:?"$PROG : -s TEXTE"}; shift 2 ;;
+    -l | --list) MODE=lister; shift ;;
+    --console)
+      [ $# -ge 3 ] || erreur "usage : $PROG --console IP PORT [NOM]"
+      console "$2" "$3" "${4:-}"; exit ;;
+    telnet://*) ouvrir_url "$1"; exit ;;
+    *) erreur "option inconnue : $1 (voir $PROG --help)" ;;
+  esac
+done
+
+hote=$(hote_eve)
+noeuds=$(lister "$hote")
+if [ "$MODE" = lister ]; then
+  [ -z "$noeuds" ] || printf '%s\n' "$noeuds"
+  exit
+fi
+[ -n "$noeuds" ] || erreur "aucun nœud démarré sur EVE-NG ($hote)"
+ip=$(ip_eve "$hote")
+
+case ${EVE_TELNETS_PICKER:-} in
+  fzf) verifier_outils fzf; choisir_fzf "$ip" "$noeuds" ;;
+  sshs) verifier_outils sshs; choisir_sshs "$ip" "$noeuds" ;;
+  *)
+    if command -v sshs > /dev/null; then choisir_sshs "$ip" "$noeuds"
+    elif command -v fzf > /dev/null; then choisir_fzf "$ip" "$noeuds"
+    else erreur "installer sshs ou fzf pour choisir un nœud (ou utiliser --list et --console)"
+    fi ;;
+esac
