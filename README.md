@@ -65,6 +65,19 @@ Si ta VM s'appelle autrement : `eve-telnets -H mon-alias`, la variable `EVE_TELN
 
 Désinstaller : `./install.sh --uninstall`.
 
+### Le navigateur demande « Ouvrir avec… » à chaque clic
+
+Une autre application déclare aussi les liens `telnet://` (souvent KTelnetService, installé avec les bibliothèques KDE), et le portail du bureau demande laquelle utiliser. Pour lui retirer seulement `telnet://`, avec une copie locale qui prend le pas sur celle du système :
+
+```bash
+grep -l x-scheme-handler/telnet /usr/share/applications/*.desktop   # qui d'autre ?
+A=~/.local/share/applications
+sed 's|x-scheme-handler/telnet;||' /usr/share/applications/ktelnetservice6.desktop > $A/ktelnetservice6.desktop
+update-desktop-database $A
+```
+
+Si la fenêtre revient encore : `systemctl --user restart xdg-desktop-portal`.
+
 ## Utilisation
 
 | Commande | Effet |
