@@ -34,7 +34,7 @@ La console passe par `socat` (terminal brut, `Ctrl+D` ferme la connexion) et `nc
 - Un accès **root en SSH par clé** à la VM EVE-NG : c'est le cas si c'est **ta** VM (VMware, Proxmox…). Sur un serveur EVE-NG partagé où tu n'es pas root, ça ne marchera pas.
 - `ssh`, `socat`, `ncat`, et `sshs` ou `fzf` pour la liste.
 
-Testé avec EVE-NG Community 5 et des nœuds IOL ; les nœuds QEMU (vIOS…) utilisent le même mécanisme.
+Testé avec EVE-NG Community 5, des nœuds IOL (routeurs, switchs) et des VPCS ; les nœuds QEMU (vIOS…) utilisent le même mécanisme. Un VPCS n'accepte qu'une console à la fois : s'il reste muet, une autre fenêtre y est sans doute déjà connectée.
 
 ## Installation
 
