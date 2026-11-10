@@ -13,8 +13,9 @@
 # la session IOS, pas la connexion.
 set -euo pipefail
 
-VERSION=0.1.0
+VERSION=0.2.0
 PROG=${0##*/}
+MOI=$(readlink -f "$0")
 
 aide() {
   cat << EOF
@@ -26,7 +27,7 @@ Usage :
   $PROG --console IP PORT [NOM]    ouvrir une console sans passer par la liste
   $PROG telnet://IP:PORT           idem, pour les liens « console native » d'EVE-NG
 
-Dans une console : Ctrl+D pour quitter (retour à la liste).
+Dans une console : Ctrl+D pour quitter (retour à la liste), Ctrl+L pour effacer l'écran.
 
 Options :
   -H, --host HÔTE     VM EVE-NG en SSH : alias de ~/.ssh/config ou root@IP
@@ -49,11 +50,29 @@ verifier_outils() {
   done
 }
 
-# console IP PORT [NOM] : ouvre la console et rend la main quand on la quitte
+# console IP PORT [NOM] : ouvre la console et rend la main quand on la quitte.
+# socat lit le clavier ; il passe par filtre_clavier (Ctrl+L) avant ncat, via
+# `eve-telnets --tuyau`. Si le chemin du script gêne socat (espace, virgule…),
+# console sans le filtre : tout marche sauf l'effacement par Ctrl+L.
 console() {
   verifier_outils socat ncat
-  printf '\e[2m── %s · Ctrl+D pour quitter ──\e[0m\n' "${3:-$1:$2}"
-  socat -,rawer,escape=0x04 "EXEC:ncat --telnet $1 $2"
+  [[ $1 =~ ^[A-Za-z0-9._:-]+$ && $2 =~ ^[0-9]+$ ]] || erreur "adresse invalide : $1 $2"
+  printf '\e[2m── %s · Ctrl+D pour quitter, Ctrl+L pour effacer ──\e[0m\n' "${3:-$1:$2}"
+  local cible="ncat --telnet $1 $2"
+  if [[ $MOI =~ ^[A-Za-z0-9/._+-]+$ ]]; then cible="$MOI --tuyau $1 $2"; fi
+  socat -,rawer,escape=0x04 "EXEC:$cible"
+}
+
+# Clavier → équipement à l'identique, sauf Ctrl+L qui efface aussi l'écran du
+# terminal ; l'équipement le reçoit quand même et réaffiche l'invite, en haut.
+# Octet par octet (LC_ALL=C) : rapide assez pour coller une configuration.
+filtre_clavier() {
+  local LC_ALL=C c
+  while IFS= read -r -d '' -n 1 c; do
+    if [ -z "$c" ]; then printf '\0'; continue; fi   # octet nul (Ctrl+Espace)
+    if [ "$c" = $'\f' ]; then { printf '\e[H\e[2J\e[3J' > /dev/tty; } 2> /dev/null || true; fi
+    printf '%s' "$c"
+  done
 }
 
 hote_eve() {
@@ -111,15 +130,14 @@ ouvrir_url() {
 }
 
 choisir_sshs() {
-  local ip=$1 noeuds=$2 moi
+  local ip=$1 noeuds=$2
   # Globale : le trap s'exécute après la fin de la fonction
   LISTE=$(mktemp -p "${XDG_RUNTIME_DIR:-/tmp}" eve-telnets.XXXXXX)
   trap 'rm -f "$LISTE"' EXIT
   awk -F'\t' -v ip="$ip" '{ printf "Host %s\n  HostName %s\n  Port %s\n\n", $1, ip, $2 }' \
     <<< "$noeuds" > "$LISTE"
-  moi=$(readlink -f "$0")
   sshs -c "$LISTE" --color green --no-sort ${RECHERCHE:+-s "$RECHERCHE"} \
-    -t "\"$moi\" --console \"{{{destination}}}\" \"{{{port}}}\" \"{{{name}}}\""
+    -t "\"$MOI\" --console \"{{{destination}}}\" \"{{{port}}}\" \"{{{name}}}\""
 }
 
 choisir_fzf() {
@@ -142,6 +160,7 @@ while [ $# -gt 0 ]; do
     --console)
       [ $# -ge 3 ] || erreur "usage : $PROG --console IP PORT [NOM]"
       console "$2" "$3" "${4:-}"; exit ;;
+    --tuyau) filtre_clavier | ncat --telnet "$2" "$3"; exit ;;   # interne, lancé par socat (console)
     telnet://*) ouvrir_url "$1"; exit ;;
     *) erreur "option inconnue : $1 (voir $PROG --help)" ;;
   esac

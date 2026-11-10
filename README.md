@@ -9,15 +9,16 @@ $ eve-telnets
 > R-STRASBOURG     192.168.1.61:32771
   SW-BREST         192.168.1.61:32772
   …
-── R-STRASBOURG · Ctrl+D pour quitter ──
+── R-STRASBOURG · Ctrl+D pour quitter, Ctrl+L pour effacer ──
 R-STRASBOURG>
 ```
 
 - **La liste suit le lab** : elle est relue à chaque lancement. Un nœud démarré apparaît, un nœud arrêté disparaît, rien à configurer.
 - **Ctrl+D quitte la console** et ramène à la liste. Pas besoin de `Ctrl+]` puis `quit`, qui ne marche pas sur un clavier AZERTY.
+- **Ctrl+L efface l'écran**, comme dans bash : Cisco IOS n'a pas de commande pour ça.
 - **Les liens « console native » d'EVE-NG** (`telnet://…`, un clic sur un nœud dans le navigateur) peuvent s'ouvrir avec eve-telnets.
 
-*English: a terminal picker for the consoles of the running nodes of an EVE-NG lab. The node list is read live over SSH; Ctrl+D closes a console.*
+*English: a terminal picker for the consoles of the running nodes of an EVE-NG lab. The node list is read live over SSH; Ctrl+D closes a console, Ctrl+L clears the screen.*
 
 ## Comment ça marche
 
@@ -88,7 +89,10 @@ Si la fenêtre revient encore : `systemctl --user restart xdg-desktop-portal`.
 | `eve-telnets --console 192.168.1.61 32769` | une console sans la liste |
 | `eve-telnets telnet://192.168.1.61:32769` | idem, comme un lien EVE-NG |
 
-Dans une console, **Ctrl+D** pour quitter. Ctrl+D ne parvient donc plus à l'équipement : sur Cisco IOS, il efface le caractère sous le curseur, comme `Suppr`.
+Dans une console :
+
+- **Ctrl+D** pour quitter. Ctrl+D ne parvient donc plus à l'équipement : sur Cisco IOS, il efface le caractère sous le curseur, comme `Suppr`.
+- **Ctrl+L** pour effacer l'écran. L'équipement le reçoit aussi et réaffiche l'invite, avec ce qui était en cours de saisie, en haut de l'écran.
 
 La liste utilise [sshs](https://github.com/quantumsheep/sshs) s'il est installé, sinon [fzf](https://github.com/junegunn/fzf). Pour forcer fzf : `EVE_TELNETS_PICKER=fzf`.
 
